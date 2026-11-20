@@ -442,6 +442,116 @@ export async function loadConfig(agentDir: string): Promise<LoadedConfig> {
     return loaded;
 }
 
+/**
+ * The whole of `mcp.json`, with its `mcpServers` as a record, so that a write keeps every other server and every other
+ * key of the file. A string is what is wrong with the file: a write never replaces one it could not read.
+ */
+async function readForWrite(
+    agentDir: string,
+): Promise<
+    { file: string; value: Record<string, unknown>; servers: Record<string, unknown> } | string
+> {
+    const file = join(agentDir, "mcp.json");
+
+    let text: string;
+
+    try {
+        text = await readFile(file, "utf8");
+    } catch (error) {
+        return (error as NodeJS.ErrnoException).code === "ENOENT"
+            ? { file, value: {}, servers: {} }
+            : `${file}: ${(error as Error).message}`;
+    }
+
+    let parsed: unknown;
+
+    try {
+        parsed = JSON.parse(text.replace(/^\uFEFF/, ""));
+    } catch (error) {
+        return `${file}: ${(error as Error).message}`;
+    }
+
+    if (!isRecord(parsed) || (parsed.mcpServers !== undefined && !isRecord(parsed.mcpServers))) {
+        return `${file}: expected an object with an "mcpServers" object`;
+    }
+
+    const servers = { ...((parsed.mcpServers ?? {}) as Record<string, unknown>) };
+
+    return { file, value: parsed, servers };
+}
+
+/** Write `mcp.json` whole, through a temporary file, so that a reader sees the old file or the new one, never half. */
+async function writeConfig(file: string, value: Record<string, unknown>): Promise<void> {
+    const temporary = `${file}.${randomUUID()}.tmp`;
+
+    await mkdir(dirname(file), { recursive: true, mode: 0o700 });
+    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+    await rename(temporary, file);
+}
+
+/**
+ * Put one server in `mcp.json`, checked by the rules Pi reads it with, and return its entry. Nothing else in the file
+ * changes: another server's entry, and another key of the file, stay as they were. A string is what is wrong with the
+ * entry, or with the file.
+ *
+ * A new or changed entry stays off until the owner turns it on here: its fingerprint no longer matches the one in
+ * Pi Pocket's settings, which is what keeps a server from running because something else wrote the file.
+ */
+export async function saveServer(
+    agentDir: string,
+    name: string,
+    raw: unknown,
+): Promise<ServerConfig | string> {
+    const checked = validateServer(name, raw);
+
+    if (typeof checked === "string") {
+        return checked;
+    }
+
+    const read = await readForWrite(agentDir);
+
+    if (typeof read === "string") {
+        return read;
+    }
+
+    // Pi counts names that differ only in "-" and "_" as one server.
+    const key = name.replace(/-/g, "_");
+    const clash = Object.keys(read.servers).find(
+        (other) => other !== name && other.replace(/-/g, "_") === key,
+    );
+
+    if (clash !== undefined) {
+        return `server "${name}" conflicts with "${clash}"`;
+    }
+
+    read.servers[name] = checked as unknown as Record<string, unknown>;
+    read.value.mcpServers = read.servers;
+
+    await writeConfig(read.file, read.value);
+
+    return checked;
+}
+
+/** Take one server out of `mcp.json`. False when the file has none of that name; a string is what is wrong with it. */
+export async function removeServer(agentDir: string, name: string): Promise<boolean | string> {
+    const read = await readForWrite(agentDir);
+
+    if (typeof read === "string") {
+        return read;
+    }
+
+    if (!Object.hasOwn(read.servers, name)) {
+        return false;
+    }
+
+    delete read.servers[name];
+    read.value.mcpServers = read.servers;
+
+    await writeConfig(read.file, read.value);
+
+    return true;
+}
+
 /** `~` and `~/…` name the home folder, as in a shell and in Pi. */
 export function expandHome(value: string): string {
     if (value === "~") {

@@ -26,9 +26,11 @@ import {
     changedParts,
     type LoadedConfig,
     loadConfig,
+    removeServer,
     type ServerEntry,
     type ServerSettings,
     type Settings,
+    saveServer,
     settingsStore,
     toolExposure,
 } from "./mcp/config.ts";
@@ -828,6 +830,40 @@ export default function createMcp(host: Host, web: Web) {
     web.route("GET", "state", () => servers.view());
 
     web.route("POST", "reload", async () => {
+        await servers.load();
+
+        return servers.view();
+    });
+
+    /**
+     * Add a server to mcp.json, or replace one of the same name: the entry is checked by the rules Pi reads the file
+     * with. It stays off until the owner turns it on, because its fingerprint is new.
+     */
+    web.route("POST", "servers", async ({ body }) => {
+        const name = typeof body.name === "string" ? body.name.trim() : "";
+        const saved = await saveServer(host.agentDir, name, body.entry);
+
+        if (typeof saved === "string") {
+            throw web.error(400, saved);
+        }
+
+        await servers.load();
+
+        return servers.view();
+    });
+
+    /** Take a server out of mcp.json. A server that is on is stopped first, as any load stops one that is gone. */
+    web.route("POST", "servers/:name/remove", async ({ params }) => {
+        const removed = await removeServer(host.agentDir, params.name!);
+
+        if (typeof removed === "string") {
+            throw web.error(400, removed);
+        }
+
+        if (!removed) {
+            throw web.error(404, "No such server in mcp.json");
+        }
+
         await servers.load();
 
         return servers.view();

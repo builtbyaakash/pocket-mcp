@@ -35,6 +35,223 @@ export default function setup(pocket) {
         return state;
     };
 
+    /** "KEY=value" lines, as an env or a header record: one per line, blank lines and # notes left out. */
+    function pairs(text) {
+        const out = {};
+
+        for (const line of String(text).split("\n")) {
+            const trimmed = line.trim();
+
+            if (trimmed === "" || trimmed.startsWith("#")) {
+                continue;
+            }
+
+            const at = trimmed.indexOf("=");
+
+            if (at < 1) {
+                throw new Error(`“${trimmed}” is not NAME=value`);
+            }
+
+            out[trimmed.slice(0, at).trim()] = trimmed.slice(at + 1).trim();
+        }
+
+        return out;
+    }
+
+    /**
+     * Add a server to mcp.json, or replace one of the same name. It lands turned off: a new entry has no fingerprint
+     * that the owner approved, so the switch is theirs to throw.
+     */
+    function AddServer({ act, busy }) {
+        const [open, setOpen] = useState(false);
+        const [name, setName] = useState("");
+        const [kind, setKind] = useState("stdio");
+        const [command, setCommand] = useState("");
+        const [args, setArgs] = useState("");
+        const [url, setUrl] = useState("");
+        const [env, setEnv] = useState("");
+        const [headers, setHeaders] = useState("");
+        const [description, setDescription] = useState("");
+        const [error, setError] = useState(null);
+
+        const reset = () => {
+            setName("");
+            setCommand("");
+            setArgs("");
+            setUrl("");
+            setEnv("");
+            setHeaders("");
+            setDescription("");
+            setError(null);
+        };
+
+        const save = async () => {
+            setError(null);
+
+            try {
+                const entry = {};
+
+                if (kind === "stdio") {
+                    entry.command = command.trim();
+
+                    const list = args
+                        .split("\n")
+                        .map((arg) => arg.trim())
+                        .filter((arg) => arg !== "");
+
+                    if (list.length > 0) {
+                        entry.args = list;
+                    }
+
+                    const vars = pairs(env);
+
+                    if (Object.keys(vars).length > 0) {
+                        entry.env = vars;
+                    }
+                } else {
+                    entry.url = url.trim();
+
+                    const map = pairs(headers);
+
+                    if (Object.keys(map).length > 0) {
+                        entry.headers = map;
+                    }
+                }
+
+                if (description.trim() !== "") {
+                    entry.description = description.trim();
+                }
+
+                await act("servers", { name: name.trim(), entry });
+                reset();
+                setOpen(false);
+            } catch (failure) {
+                setError(failure.message);
+            }
+        };
+
+        if (!open) {
+            return html`<div class="mcp-row">
+                <button class="button primary" disabled=${busy} onClick=${() => setOpen(true)}>
+                    Add a server
+                </button>
+            </div>`;
+        }
+
+        return html`<section class="mcp-server mcp-add">
+            <div class="mcp-head">
+                <div class="mcp-title"><strong class="mcp-name">Add a server</strong></div>
+            </div>
+            <div class="mcp-row">
+                <input
+                    class="mcp-input"
+                    aria-label="Server name"
+                    placeholder="name (letters, digits, - and _)"
+                    value=${name}
+                    onInput=${(event) => setName(event.currentTarget.value)}
+                />
+                <${Select}
+                    value=${kind}
+                    options=${[
+                        ["stdio", "stdio · a command"],
+                        ["http", "HTTP · an address"],
+                    ]}
+                    onChange=${setKind}
+                />
+            </div>
+            ${
+                kind === "stdio"
+                    ? html`<div class="mcp-row">
+                          <input
+                              class="mcp-input"
+                              aria-label="Command"
+                              placeholder="command, e.g. npx"
+                              value=${command}
+                              onInput=${(event) => setCommand(event.currentTarget.value)}
+                          />
+                      </div>
+                      <label class="small muted">Arguments, one per line</label>
+                      <textarea
+                          class="mcp-input mono small"
+                          rows="3"
+                          value=${args}
+                          onInput=${(event) => setArgs(event.currentTarget.value)}
+                      ></textarea>
+                      <label class="small muted">Environment, NAME=value per line</label>
+                      <textarea
+                          class="mcp-input mono small"
+                          rows="2"
+                          value=${env}
+                          onInput=${(event) => setEnv(event.currentTarget.value)}
+                      ></textarea>`
+                    : html`<div class="mcp-row">
+                          <input
+                              class="mcp-input"
+                              aria-label="Address"
+                              placeholder="https://example.com/mcp"
+                              value=${url}
+                              onInput=${(event) => setUrl(event.currentTarget.value)}
+                          />
+                      </div>
+                      <label class="small muted">Headers, NAME=value per line</label>
+                      <textarea
+                          class="mcp-input mono small"
+                          rows="2"
+                          value=${headers}
+                          onInput=${(event) => setHeaders(event.currentTarget.value)}
+                      ></textarea>`
+            }
+            <div class="mcp-row">
+                <input
+                    class="mcp-input"
+                    aria-label="Description"
+                    placeholder="What it offers, in a sentence (optional)"
+                    value=${description}
+                    onInput=${(event) => setDescription(event.currentTarget.value)}
+                />
+            </div>
+            <p class="small muted">
+                It is written to mcp.json turned off: turn it on here to start it. A literal secret in
+                env or headers is written to that file as you type it, where Pi's terminal app
+                reads it too.
+            </p>
+            ${error ? html`<div class="error-box">${error}</div>` : null}
+            <div class="mcp-row">
+                <button
+                    class="button primary"
+                    disabled=${busy || name.trim() === "" || (kind === "stdio" ? command.trim() === "" : url.trim() === "")}
+                    onClick=${save}
+                >
+                    Save to mcp.json
+                </button>
+                <button
+                    class="button"
+                    disabled=${busy}
+                    onClick=${() => {
+                        reset();
+                        setOpen(false);
+                    }}
+                >
+                    Cancel
+                </button>
+            </div>
+        </section>`;
+    }
+
+    /** A small select, so that a form does not depend on a component the app may not have. */
+    function Select({ value, options, onChange }) {
+        return html`<select
+            class="mcp-input"
+            value=${value}
+            onChange=${(event) => onChange(event.currentTarget.value)}
+        >
+            ${options.map(
+                ([option, label]) =>
+                    html`<option value=${option} selected=${option === value}>${label}</option>`,
+            )}
+        </select>`;
+    }
+
     /** The entry as mcp.json has it, with what changed since the owner turned it on. */
     function Entry({ server }) {
         const changed = server.parts.filter((part) => part.changed);
@@ -235,6 +452,23 @@ export default function setup(pocket) {
                 />
             </div>
             ${server.tools.length > 0 ? html`<${Tools} server=${server} />` : null}
+            <div class="mcp-row">
+                <button
+                    class="button"
+                    disabled=${busy}
+                    onClick=${() => {
+                        if (
+                            confirm(
+                                `Remove “${server.name}” from mcp.json? Its entry is deleted from the file.`,
+                            )
+                        ) {
+                            run("remove", {});
+                        }
+                    }}
+                >
+                    Remove from mcp.json
+                </button>
+            </div>
         </section>`;
     }
 
@@ -334,8 +568,8 @@ export default function setup(pocket) {
             ${
                 state.servers.length === 0
                     ? html`<p class="muted">
-                      mcp.json has no servers. Add one with <span class="mono">pi mcp add</span> in a
-                      terminal, then read mcp.json again.
+                      mcp.json has no servers. Add one below, or with
+                      <span class="mono">pi mcp add</span> in a terminal, then read mcp.json again.
                   </p>`
                     : state.servers.map(
                           (server) =>
@@ -347,6 +581,7 @@ export default function setup(pocket) {
                           />`,
                       )
             }
+            <${AddServer} act=${act} busy=${busy} />
         </div>`;
     }
 

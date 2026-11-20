@@ -245,3 +245,86 @@ test("turning the module off stops the server's process", async () => {
     await app.setExtensionEnabled(owner(app), "mcp.ts", false);
     await until(() => !alive(), "the server's process ended", 5_000);
 });
+
+test("a server added on the page is written to mcp.json, off, and the rest of the file stays", async () => {
+    await app.setExtensionEnabled(owner(app), "mcp.ts", true);
+
+    const file = join(process.env.PI_CODING_AGENT_DIR!, "mcp.json");
+
+    writeFileSync(file, JSON.stringify({ mcpServers: { notes: notes() }, keepMe: 1 }, null, 2));
+    await route("reload", {});
+
+    const answer = await route("servers", {
+        name: "added",
+        entry: { command: "node", args: ["--version"], description: "added from the page" },
+    });
+
+    const written = JSON.parse(readFileSync(file, "utf8"));
+
+    assert.deepEqual(written.mcpServers.added, {
+        command: "node",
+        args: ["--version"],
+        description: "added from the page",
+    });
+    assert.ok(written.mcpServers.notes, "another server in the file stays");
+    assert.equal(written.keepMe, 1, "another key of the file stays");
+
+    const added = answer.servers.find((each: { name: string }) => each.name === "added");
+
+    assert.equal(added.pocket, "off", "a new entry waits for the owner's switch");
+    assert.equal(added.status, "off");
+});
+
+test("an entry the page refuses is not written, and says why", async () => {
+    await app.setExtensionEnabled(owner(app), "mcp.ts", true);
+
+    const file = join(process.env.PI_CODING_AGENT_DIR!, "mcp.json");
+
+    writeConfig({ notes: notes() });
+    await route("reload", {});
+
+    const before = readFileSync(file, "utf8");
+    const badName = await request("servers", { name: "not a name", entry: { command: "node" } });
+
+    assert.equal(badName.status, 400);
+    assert.match((await badName.json()).error, /invalid server name/);
+
+    const noTransport = await request("servers", { name: "nothing", entry: { args: [] } });
+
+    assert.equal(noTransport.status, 400);
+    assert.match((await noTransport.json()).error, /needs "command" \(stdio\) or "url"/);
+
+    assert.equal(readFileSync(file, "utf8"), before, "a refused entry leaves the file untouched");
+});
+
+test('a name that differs only in "-" and "_" is refused, as Pi counts it once', async () => {
+    writeConfig({ "my-server": notes() });
+    await route("reload", {});
+
+    const response = await request("servers", { name: "my_server", entry: { command: "node" } });
+
+    assert.equal(response.status, 400);
+    assert.match((await response.json()).error, /conflicts with "my-server"/);
+});
+
+test("a server removed on the page leaves the file's other servers and keys", async () => {
+    await app.setExtensionEnabled(owner(app), "mcp.ts", true);
+
+    const file = join(process.env.PI_CODING_AGENT_DIR!, "mcp.json");
+
+    writeFileSync(file, JSON.stringify({ mcpServers: { notes: notes() }, keepMe: 1 }, null, 2));
+    await route("reload", {});
+
+    const answer = await route("servers/notes/remove", {});
+
+    assert.equal(answer.servers.length, 0, "the server is gone from the page");
+
+    const written = JSON.parse(readFileSync(file, "utf8"));
+
+    assert.equal(written.mcpServers.notes, undefined);
+    assert.equal(written.keepMe, 1, "another key of the file stays");
+
+    const again = await request("servers/notes/remove", {});
+
+    assert.equal(again.status, 404);
+});
