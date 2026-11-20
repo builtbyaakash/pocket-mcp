@@ -328,3 +328,51 @@ test("a server removed on the page leaves the file's other servers and keys", as
 
     assert.equal(again.status, 404);
 });
+
+test("an HTTP server added with OAuth overrides keeps them, and waits to be turned on", async () => {
+    await app.setExtensionEnabled(owner(app), "mcp.ts", true);
+
+    const file = join(process.env.PI_CODING_AGENT_DIR!, "mcp.json");
+
+    writeFileSync(file, JSON.stringify({ mcpServers: {} }, null, 2));
+    await route("reload", {});
+
+    const answer = await route("servers", {
+        name: "oauthy",
+        entry: {
+            url: "https://example.com/mcp",
+            oauth: { clientId: "abc123", scope: "read", callbackPort: 8123 },
+        },
+    });
+
+    const written = JSON.parse(readFileSync(file, "utf8"));
+
+    assert.deepEqual(
+        written.mcpServers.oauthy,
+        {
+            url: "https://example.com/mcp",
+            oauth: { clientId: "abc123", scope: "read", callbackPort: 8123 },
+        },
+        "the OAuth overrides are written as given",
+    );
+
+    const added = answer.servers.find((each: { name: string }) => each.name === "oauthy");
+
+    assert.equal(added.kind, "http");
+    assert.equal(added.pocket, "off", "an OAuth server also waits for the owner's switch");
+});
+
+test("an HTTP server added with an OAuth override Pi cannot use is refused", async () => {
+    await app.setExtensionEnabled(owner(app), "mcp.ts", true);
+
+    const bad = await request("servers", {
+        name: "oauthbad",
+        entry: {
+            url: "https://example.com/mcp",
+            oauth: { authServerMetadataUrl: "http://x.test" },
+        },
+    });
+
+    assert.equal(bad.status, 400);
+    assert.match((await bad.json()).error, /authServerMetadataUrl must be an https address/);
+});

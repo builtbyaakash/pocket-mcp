@@ -73,6 +73,14 @@ export default function setup(pocket) {
         const [headers, setHeaders] = useState("");
         const [description, setDescription] = useState("");
         const [error, setError] = useState(null);
+        // OAuth overrides: empty for a server that registers its client on its own (DCR), as most do.
+        const [clientId, setClientId] = useState("");
+        const [clientSecret, setClientSecret] = useState("");
+        const [scope, setScope] = useState("");
+        const [callbackPort, setCallbackPort] = useState("");
+        const [clientName, setClientName] = useState("");
+        const [registration, setRegistration] = useState("");
+        const [metadataUrl, setMetadataUrl] = useState("");
 
         const reset = () => {
             setName("");
@@ -82,6 +90,13 @@ export default function setup(pocket) {
             setEnv("");
             setHeaders("");
             setDescription("");
+            setClientId("");
+            setClientSecret("");
+            setScope("");
+            setCallbackPort("");
+            setClientName("");
+            setRegistration("");
+            setMetadataUrl("");
             setError(null);
         };
 
@@ -115,6 +130,49 @@ export default function setup(pocket) {
 
                     if (Object.keys(map).length > 0) {
                         entry.headers = map;
+                    }
+
+                    // Only the overrides that were given: an empty OAuth block would say something else.
+                    const oauth = {};
+
+                    if (clientId.trim() !== "") {
+                        oauth.clientId = clientId.trim();
+                    }
+
+                    if (clientSecret.trim() !== "") {
+                        oauth.clientSecret = clientSecret.trim();
+                    }
+
+                    if (scope.trim() !== "") {
+                        oauth.scope = scope.trim();
+                    }
+
+                    if (clientName.trim() !== "") {
+                        oauth.clientName = clientName.trim();
+                    }
+
+                    if (metadataUrl.trim() !== "") {
+                        oauth.authServerMetadataUrl = metadataUrl.trim();
+                    }
+
+                    if (registration !== "") {
+                        oauth.clientRegistration = registration;
+                    }
+
+                    if (callbackPort.trim() !== "") {
+                        const port = Number(callbackPort.trim());
+
+                        if (!Number.isInteger(port) || port < 1 || port > 65535) {
+                            throw new Error(
+                                "The callback port must be a whole number from 1 to 65535",
+                            );
+                        }
+
+                        oauth.callbackPort = port;
+                    }
+
+                    if (Object.keys(oauth).length > 0) {
+                        entry.oauth = oauth;
                     }
                 }
 
@@ -199,7 +257,76 @@ export default function setup(pocket) {
                           rows="2"
                           value=${headers}
                           onInput=${(event) => setHeaders(event.currentTarget.value)}
-                      ></textarea>`
+                      ></textarea>
+                      <details class="mcp-oauth">
+                          <summary class="small">
+                              OAuth, only for a server that cannot register its own client
+                          </summary>
+                          <p class="small muted">
+                              Leave these empty and, with no Authorization header, Pi Pocket signs in
+                              with OAuth on the first 401, registering its own client. Fill them in
+                              only when the server needs a client made in advance.
+                          </p>
+                          <div class="mcp-row">
+                              <input
+                                  class="mcp-input"
+                                  aria-label="OAuth client id"
+                                  placeholder="client id"
+                                  value=${clientId}
+                                  onInput=${(event) => setClientId(event.currentTarget.value)}
+                              />
+                              <input
+                                  class="mcp-input"
+                                  type="password"
+                                  aria-label="OAuth client secret"
+                                  placeholder="client secret (optional)"
+                                  value=${clientSecret}
+                                  onInput=${(event) => setClientSecret(event.currentTarget.value)}
+                              />
+                          </div>
+                          <div class="mcp-row">
+                              <input
+                                  class="mcp-input"
+                                  aria-label="OAuth scope"
+                                  placeholder="scope (optional)"
+                                  value=${scope}
+                                  onInput=${(event) => setScope(event.currentTarget.value)}
+                              />
+                              <input
+                                  class="mcp-input"
+                                  aria-label="OAuth callback port"
+                                  placeholder="callback port (optional)"
+                                  value=${callbackPort}
+                                  onInput=${(event) => setCallbackPort(event.currentTarget.value)}
+                              />
+                          </div>
+                          <div class="mcp-row">
+                              <input
+                                  class="mcp-input"
+                                  aria-label="OAuth client name"
+                                  placeholder="client name (optional)"
+                                  value=${clientName}
+                                  onInput=${(event) => setClientName(event.currentTarget.value)}
+                              />
+                              <${Select}
+                                  value=${registration}
+                                  options=${[
+                                      ["", "registration: automatic"],
+                                      ["dcr", "registration: dynamic (dcr)"],
+                                  ]}
+                                  onChange=${setRegistration}
+                              />
+                          </div>
+                          <div class="mcp-row">
+                              <input
+                                  class="mcp-input"
+                                  aria-label="Authorization server metadata URL"
+                                  placeholder="authorization server metadata URL (optional)"
+                                  value=${metadataUrl}
+                                  onInput=${(event) => setMetadataUrl(event.currentTarget.value)}
+                              />
+                          </div>
+                      </details>`
             }
             <div class="mcp-row">
                 <input
